@@ -2,6 +2,8 @@
 #include "pico/cyw43_arch.h"
 #include "lwip/tcp.h"
 #include "secrets.h"
+#include "pico/mutex.h"
+
 #include <string>
 #include <cstdlib>
 
@@ -10,37 +12,53 @@
 constexpr uint LED_PIN = 28;
 
 class Program {
-    public:
-        void init(uint pin) {
-            pin_ = pin;
-            gpio_init(pin_);
-            gpio_set_dir(pin_, GPIO_OUT);
-            printf("Init program\n");
+public:
+    void init() {
+        gpio_init(pin_);
+        gpio_set_dir(pin_, GPIO_OUT);
+        mutex_init(&mutex_);
+
+        printf("Init program\n");
+    }
+
+    void init(uint pin) {
+        pin_ = pin;
+        gpio_init(pin_);
+        gpio_set_dir(pin_, GPIO_OUT);
+        mutex_init(&mutex_);
+
+        printf("Init program\n");
+    }
+
+    void update(const std::string &msg) {
+        int val = std::stoi(msg);
+        mutex_enter_blocking(&mutex_);
+        if (val > 0) {
+            interval_ = val;
         }
+        mutex_exit(&mutex_);
+    }
 
-        void update(const std::string &msg) {
-            int val = std::stoi(msg);
-            if (val > 0) {
-                interval_ = val;
-            }
+    void tick() {
+        uint32_t now = to_ms_since_boot(get_absolute_time());
 
+        mutex_enter_blocking(&mutex_);
+        uint32_t interval = interval_;
+        mutex_exit(&mutex_);
+
+        if (now - last_toggle_ > interval) {
+            led_state_ = !led_state_;
+            gpio_put(pin_, led_state_);
+            last_toggle_ = now;
         }
+    }
 
-        void tick() {
-            uint32_t now = to_ms_since_boot(get_absolute_time());
-            if (now - last_toggle_ > interval_) {
-                printf("led state %i\n", led_state_);
-                led_state_ = !led_state_;
-                gpio_put(pin_, led_state_);
-                last_toggle_ = now;
-            }
-        }
-
-    private:
-        uint pin_ = 28;
-        volatile uint32_t interval_ = 500;
-        bool led_state_ = false;
-        uint32_t last_toggle_ = 0;
+private:
+    uint pin_ = 28;
+    uint32_t interval_ = 500;
+    bool led_state_ = false;
+    uint32_t last_toggle_ = 0;
+    mutex_t mutex_;
 };
 
 static Program prog;
@@ -79,7 +97,6 @@ int main() {
     tcp_accept(pcb, tcp_accept_cb);
 
     while (true) {
-        cyw43_arch_poll();
         prog.tick();
         sleep_ms(1);
     }
